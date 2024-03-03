@@ -54,6 +54,7 @@ int main(int argc, char** argv) {
     std::vector<int> local_matrix(rows_per_procs * matrix_dim);
     std::vector<int> transp(matrix_dim * matrix_dim);
     std::vector<int> local_transp(rows_per_procs* matrix_dim);
+    std::vector<int> temp_transp(rows_per_procs * matrix_dim);
 
     std::fstream infile(input_file);
     if (!world_rank)
@@ -62,6 +63,7 @@ int main(int argc, char** argv) {
 
     MPI_Scatter(matrix.data(), rows_per_procs * matrix_dim, MPI_INT, local_matrix.data(), rows_per_procs * matrix_dim, MPI_INT, 0, MPI_COMM_WORLD);
 
+    double start_time = MPI_Wtime();
     // Used this to check and it works
     // if (world_rank == 1) {
     //     for (int k = 0; k < matrix_dim * rows_per_procs; k++) {
@@ -70,12 +72,16 @@ int main(int argc, char** argv) {
     //     std::cout << world_rank << std::endl;
     // }
 
-    double start_time = MPI_Wtime();
+    // Transpose in each processor
+    for (int i = 0; i < rows_per_procs; ++i) {
+        for (int j = 0; j < matrix_dim; ++j) {
+            temp_transp[j * rows_per_procs + i] = local_matrix[i * matrix_dim + j];
+        }
+    }
 
-    // we need to modify this so that it sends by column not row
-    alltoall(perm_choice, local_matrix.data(), rows_per_procs, MPI_INT, local_transp.data(), rows_per_procs, MPI_INT, MPI_COMM_WORLD);
+    alltoall(perm_choice, temp_transp.data(), rows_per_procs, MPI_INT, local_transp.data(), rows_per_procs, MPI_INT, MPI_COMM_WORLD);
 
-    //
+    // check
     if (world_rank == 0) {
         for (int k = 0; k < matrix_dim; k++) {
             std::cout << local_transp[k] << " ";
@@ -92,7 +98,7 @@ int main(int argc, char** argv) {
         std::ofstream outfile(output_file);
         for (int i = 0; i < matrix_dim; i++) {
             for (int j = 0; j < matrix_dim; j++) {
-                outfile << transp[j * matrix_dim + i] << " ";
+                outfile << transp[i * matrix_dim + j] << " ";
             }
             outfile << std::endl;
         }
