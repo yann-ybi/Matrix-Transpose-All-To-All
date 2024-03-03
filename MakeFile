@@ -1,0 +1,11 @@
+CC=mpicxx
+CFLAGS=-Wall
+TARGET=pi_calc
+
+all: $(TARGET)
+
+$(TARGET): pi_calc.cpp
+	$(CC) -o $(TARGET) pi_calc.cpp $(CFLAGS)
+
+clean:
+	rm -f $(TARGET)
