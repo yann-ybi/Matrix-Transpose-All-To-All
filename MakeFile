@@ -1,11 +1,11 @@
 CC=mpicxx
 CFLAGS=-Wall
-TARGET=pi_calc
+TARGET=transpose
 
 all: $(TARGET)
 
-$(TARGET): pi_calc.cpp
-	$(CC) -o $(TARGET) pi_calc.cpp $(CFLAGS)
+$(TARGET): pa2.cpp
+	$(CC) -o $(TARGET) pa2.cpp $(CFLAGS)
 
 clean:
 	rm -f $(TARGET)
