@@ -1,6 +1,7 @@
 #include <iostream>
 #include <mpi.h>
 #include <fstream>
+#include <vector>
 
 // mpirun -np 8 ./transpose matrix.txt transpose.txt a 24
 
@@ -64,13 +65,6 @@ int main(int argc, char** argv) {
     MPI_Scatter(matrix.data(), rows_per_procs * matrix_dim, MPI_INT, local_matrix.data(), rows_per_procs * matrix_dim, MPI_INT, 0, MPI_COMM_WORLD);
 
     double start_time = MPI_Wtime();
-    // Used this to check and it works
-    // if (world_rank == 1) {
-    //     for (int k = 0; k < matrix_dim * rows_per_procs; k++) {
-    //         std::cout << local_matrix[k] << " ";
-    //     }
-    //     std::cout << world_rank << std::endl;
-    // }
 
     // Transpose in each processor
     for (int i = 0; i < matrix_dim; ++i) {
@@ -79,48 +73,28 @@ int main(int argc, char** argv) {
         }
     }
 
-    if (world_rank == 1) {
-        for (int i = 0; i < rows_per_procs; ++i) {
-            for (int j = 0; j < matrix_dim; ++j) {
-                std::cout << temp_transp[i * matrix_dim + j] << " ";
-            }
-            std::cout << std::endl;
-        }
-
-        std::cout << std::endl;
-        for (int i = 0; i < rows_per_procs; ++i) {
-            for (int j = 0; j < matrix_dim; ++j) {
-                std::cout << local_matrix[i * matrix_dim + j] << " ";
-            }
-            std::cout << std::endl;
-        }
-    }
-
     int items_per_procs = (rows_per_procs * matrix_dim) / world_size;   
 
     alltoall(perm_choice, temp_transp.data(), items_per_procs, MPI_INT, local_transp.data(), items_per_procs, MPI_INT, MPI_COMM_WORLD);
-    
+
+    // reorganization needs to happen here
+    std::vector<int> gatherready(rows_per_procs * matrix_dim);
+    int count = 0;
+    int t = 0;
+    for (int i = 0; i < matrix_dim; i++) {
+        for (int j = 0; j < rows_per_procs; j++) {
+            gatherready[i * rows_per_procs + j] = local_transp[(((i + count) * rows_per_procs + t) % (matrix_dim * rows_per_procs)) + j];
+        }
+
+        count += rows_per_procs - 1;
+        if ((i + 1) % 8 == 0 && i != 0) { t += rows_per_procs;}
+    }
+
+
     double end_time = MPI_Wtime();
     double time_taken_ms = (end_time - start_time) * 1000.0; 
 
-    if (world_rank == 1) {
-        std::cout << std::endl;
-        for (int i = 0; i < matrix_dim; ++i) {
-            for (int j = 0; j < rows_per_procs; ++j) {
-                std::cout << local_transp[i * rows_per_procs + j] << " ";
-            }
-            std::cout << std::endl;
-        }
-    }
-
-    MPI_Gather(local_transp.data(), rows_per_procs * matrix_dim, MPI_INT, transp.data(), rows_per_procs * matrix_dim, MPI_INT, 0, MPI_COMM_WORLD);
-
-    // check
-    // if (world_rank == 0) {
-    //     for (int k = 0; k < matrix_dim; k++) {
-    //         std::cout << transp[k + matrix_dim * 0] << " ";
-    //     }
-    // }
+    MPI_Gather(gatherready.data(), rows_per_procs * matrix_dim, MPI_INT, transp.data(), rows_per_procs * matrix_dim, MPI_INT, 0, MPI_COMM_WORLD);
 
     std::ofstream outfile(output_file);
     if (!world_rank) {
@@ -129,7 +103,7 @@ int main(int argc, char** argv) {
             for (int j = 0; j < matrix_dim; j++) {
                 outfile << transp[i * matrix_dim + j] << " ";
             }
-            outfile << " done " << std::endl;
+            outfile << std::endl;
         }
         printf("Time taken: %.6f milliseconds\n", time_taken_ms);
     }
