@@ -5,14 +5,50 @@
 
 // mpirun -np 8 ./transpose matrix.txt transpose.txt a 24
 
+int MPI_Type_size_wrapper(MPI_Datatype datatype) {
+    int size;
+    MPI_Type_size(datatype, &size);
+    return size;
+}
+
 int HPC_Alltoall_H(const void *sendbuf, int sendcount, MPI_Datatype sendtype, void *recvbuf, int recvcount, MPI_Datatype recvtype, MPI_Comm comm) {
     // hypercubic permutation placeholder
     return MPI_Alltoall(sendbuf, sendcount, sendtype, recvbuf, recvcount, recvtype, comm);
 }
 
 int HPC_Alltoall_A(const void *sendbuf, int sendcount, MPI_Datatype sendtype, void *recvbuf, int recvcount, MPI_Datatype recvtype, MPI_Comm comm) {
-    // arbitrary permutation placeholder
-    return MPI_Alltoall(sendbuf, sendcount, sendtype, recvbuf, recvcount, recvtype, comm);
+
+    int world_size, world_rank;
+
+    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+
+    std::vector<MPI_Request> send_requests(world_size - 1);
+    std::vector<MPI_Request> recv_requests(world_size - 1);
+
+    std::vector<MPI_Status> send_statuses(world_size - 1);
+    std::vector<MPI_Status> recv_statuses(world_size - 1);
+
+    // copy the data that is supposed to be sent to itself directly into the recvbuf
+    std::memcpy(static_cast<char*>(recvbuf) + world_rank * recvcount * MPI_Type_size_wrapper(recvtype), 
+                static_cast<const char*>(sendbuf) + world_rank * sendcount * MPI_Type_size_wrapper(sendtype), 
+                sendcount * MPI_Type_size_wrapper(sendtype));
+
+    for (int j = 1; j < world_size; j++) {
+
+        int send_partner = (world_rank + j) % world_size;
+        int recv_partner = (world_rank - j + world_size) % world_size;
+
+        MPI_Isend(static_cast<const char*>(sendbuf) + send_partner * sendcount * MPI_Type_size_wrapper(sendtype), sendcount, sendtype, send_partner, 0, comm, &send_requests[j - 1]);
+
+        MPI_Irecv(static_cast<char*>(recvbuf) + recv_partner * recvcount * MPI_Type_size_wrapper(recvtype), recvcount, recvtype, recv_partner, 0, comm, &recv_requests[j - 1]);
+    }
+
+    // wait for all non-blocking operations to complete
+    MPI_Waitall(world_size - 1, &send_requests[0], &send_statuses[0]);
+    MPI_Waitall(world_size - 1, &recv_requests[0], &recv_statuses[0]);
+
+    return MPI_SUCCESS;
 }
 
 int alltoall(char choice, const void *sendbuf, int sendcount, MPI_Datatype sendtype, void *recvbuf, int recvcount, MPI_Datatype recvtype, MPI_Comm comm) {
@@ -106,6 +142,7 @@ int main(int argc, char** argv) {
         }
         printf("Time taken: %.6f milliseconds\n", time_taken_ms);
     }
+
     MPI_Finalize();
     
     return 0;
