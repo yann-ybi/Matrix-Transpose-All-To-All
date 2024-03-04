@@ -6,12 +6,12 @@
 // mpirun -np 8 ./transpose matrix.txt transpose.txt a 24
 
 int HPC_Alltoall_H(const void *sendbuf, int sendcount, MPI_Datatype sendtype, void *recvbuf, int recvcount, MPI_Datatype recvtype, MPI_Comm comm) {
-    // hypercubic permutation
+    // hypercubic permutation placeholder
     return MPI_Alltoall(sendbuf, sendcount, sendtype, recvbuf, recvcount, recvtype, comm);
 }
 
 int HPC_Alltoall_A(const void *sendbuf, int sendcount, MPI_Datatype sendtype, void *recvbuf, int recvcount, MPI_Datatype recvtype, MPI_Comm comm) {
-    // arbitrary permutation
+    // arbitrary permutation placeholder
     return MPI_Alltoall(sendbuf, sendcount, sendtype, recvbuf, recvcount, recvtype, comm);
 }
 
@@ -66,7 +66,7 @@ int main(int argc, char** argv) {
 
     double start_time = MPI_Wtime();
 
-    // Transpose in each processor
+    // transpose done in each processor to prepare for the all to all
     for (int i = 0; i < matrix_dim; ++i) {
         for (int j = 0; j < rows_per_procs; ++j) {
             temp_transp[i * rows_per_procs + j] = local_matrix[j * matrix_dim + i];
@@ -77,19 +77,18 @@ int main(int argc, char** argv) {
 
     alltoall(perm_choice, temp_transp.data(), items_per_procs, MPI_INT, local_transp.data(), items_per_procs, MPI_INT, MPI_COMM_WORLD);
 
-    // reorganization needs to happen here
+    // reorganization needs to happen here to prepare for gathering
     std::vector<int> gatherready(rows_per_procs * matrix_dim);
     int count = 0;
-    int t = 0;
+    int shift = 0;
     for (int i = 0; i < matrix_dim; i++) {
         for (int j = 0; j < rows_per_procs; j++) {
-            gatherready[i * rows_per_procs + j] = local_transp[(((i + count) * rows_per_procs + t) % (matrix_dim * rows_per_procs)) + j];
+            gatherready[i * rows_per_procs + j] = local_transp[(((i + count) * rows_per_procs + shift) % (matrix_dim * rows_per_procs)) + j];
         }
 
         count += rows_per_procs - 1;
-        if ((i + 1) % 8 == 0 && i != 0) { t += rows_per_procs;}
+        if ((i + 1) % 8 == 0 && i) {shift += rows_per_procs;}
     }
-
 
     double end_time = MPI_Wtime();
     double time_taken_ms = (end_time - start_time) * 1000.0; 
