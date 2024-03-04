@@ -87,7 +87,7 @@ int main(int argc, char** argv) {
         }
 
         count += rows_per_procs - 1;
-        if ((i + 1) % 8 == 0 && i) {shift += rows_per_procs;}
+        if ((i + 1) % (matrix_dim/rows_per_procs) == 0 && i) {shift += rows_per_procs;}
     }
 
     double end_time = MPI_Wtime();
