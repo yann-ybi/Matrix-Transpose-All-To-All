@@ -44,7 +44,7 @@ int HPC_Alltoall_H(const void *sendbuf, int sendcount, MPI_Datatype sendtype, vo
 
     char* temp_send_buffer = new char[sendbuf_size];
     memcpy(temp_send_buffer, static_cast<char*>(const_cast<void*>(sendbuf)), sendbuf_size);
-
+    // char* temp_recv_buffer = new char[sendbuf_size];
     for (int j = 0; j < stages; j++) {
 
         partner = world_rank ^ (1 << (stages - j - 1));
@@ -62,17 +62,17 @@ int HPC_Alltoall_H(const void *sendbuf, int sendcount, MPI_Datatype sendtype, vo
         MPI_Wait(&recv_requests[0], &recv_statuses[0]);
 
         // Modify temp_send_buffer based on recvbuf
-        // I want to store the first sendcount elements from temp_send_buffer, then the next sendcount from recvbuf
         char* storage_buffer = new char[sendbuf_size];
-        int shift = 0;
-        for (int k = 0; k < modified_sendcount; k++) {
-            memcpy(storage_buffer + sendcount * MPI_Type_size_wrapper(sendtype) * k * 2, temp_send_buffer + shift, sendcount * MPI_Type_size_wrapper(sendtype));
-            memcpy(storage_buffer + sendcount * MPI_Type_size_wrapper(sendtype) * (2 * k + 1), recv_pos + shift, sendcount * MPI_Type_size_wrapper(sendtype));
-            shift += (sendcount * MPI_Type_size_wrapper(sendtype));
+
+        for (int k = 0; k < splits; k++) {
+            memcpy(storage_buffer + sendcount * MPI_Type_size_wrapper(sendtype) * k * 2, temp_send_buffer + sendcount * MPI_Type_size_wrapper(sendtype) * k, sendcount * MPI_Type_size_wrapper(sendtype));
+            memcpy(storage_buffer + sendcount * MPI_Type_size_wrapper(sendtype) * (2 * k + 1), recv_pos + sendcount * MPI_Type_size_wrapper(sendtype) * k, sendcount * MPI_Type_size_wrapper(sendtype));
         }
 
-        memcpy(temp_send_buffer, storage_buffer, sendbuf_size);
-        delete[] storage_buffer;
+        std::memcpy(temp_send_buffer, storage_buffer, sendbuf_size);
+
+        memset(storage_buffer, 0, sendbuf_size);
+        memset(storage_buffer, 0, sendbuf_size);
 
         if (world_rank == 0) {
             std::cout << "stage " << j << " :" << world_rank << " sends to " << partner  << " " << "splits :" << splits << " sendbuff " << sendbuf_size << std::endl;
@@ -88,38 +88,24 @@ int HPC_Alltoall_H(const void *sendbuf, int sendcount, MPI_Datatype sendtype, vo
             }
             std::cout << std::endl;
 
+
             std::cout << std::endl;
-            int* sendbuf_int = reinterpret_cast<int*>(temp_send_buffer);
+            int* sendbuf_int2 = reinterpret_cast<int*>(temp_send_buffer);
             for (int j = 0; j < 24; j++) {
                 for (int i = 0; i < 3; i++)
-                    std::cout << sendbuf_int[j * 3 + i] << " ";
+                    std::cout << sendbuf_int2[j * 3 + i] << " ";
 
                 std::cout << std::endl;
                 if ((j+1) % 3 == 0 && j != 0) std::cout << std::endl;
             }
             std::cout << std::endl;
-
-            // std::cout << std::endl;
-            // int* sendbuf_int2 = reinterpret_cast<int*>(storage_buffer);
-            // for (int j = 0; j < 24; j++) {
-            //     for (int i = 0; i < 3; i++)
-            //         std::cout << sendbuf_int2[j * 3 + i] << " ";
-
-            //     std::cout << std::endl;
-            //     if ((j+1) % 3 == 0 && j != 0) std::cout << std::endl;
-            // }
-            // std::cout << std::endl;
-
+            std::cout << " SUCESSS " << std::endl;
         }
+        if (j == stages - 1) { delete[] storage_buffer; }
+
     }
-
-    std::memcpy(static_cast<char*>(recvbuf) + world_rank * recvcount * MPI_Type_size_wrapper(recvtype),
-                static_cast<const char*>(sendbuf) + world_rank * sendcount * MPI_Type_size_wrapper(sendtype),
-                sendcount * MPI_Type_size_wrapper(sendtype));
-
+    std::memcpy(static_cast<char*>(recvbuf), temp_send_buffer, sendbuf_size);
     return MPI_SUCCESS;
-    // hypercubic permutation placeholder
-    // return MPI_Alltoall(sendbuf, sendcount, sendtype, recvbuf, recvcount, recvtype, comm);
 }
 
 int HPC_Alltoall_A(const void *sendbuf, int sendcount, MPI_Datatype sendtype, void *recvbuf, int recvcount, MPI_Datatype recvtype, MPI_Comm comm) {
