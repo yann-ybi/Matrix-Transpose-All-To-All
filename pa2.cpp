@@ -2,8 +2,8 @@
 #include <mpi.h>
 #include <fstream>
 #include <vector>
-
-// mpirun -np 8 ./transpose matrix.txt transpose.txt a 24
+#include <algorithm>
+#include <unordered_map>
 
 int MPI_Type_size_wrapper(MPI_Datatype datatype) {
     int size;
@@ -18,12 +18,11 @@ int log2_int(int value) {
 }
 
 int HPC_Alltoall_H(const void *sendbuf, int sendcount, MPI_Datatype sendtype, void *recvbuf, int recvcount, MPI_Datatype recvtype, MPI_Comm comm) {
-
     int world_size, world_rank;
     MPI_Comm_rank(comm, &world_rank);
     MPI_Comm_size(comm, &world_size);
 
-    // Calculate the number of stages of the hypercube (stages)
+    // number of stages of the hypercube (stages)
     int stages = log2_int(world_size);
 
     std::vector<MPI_Request> send_requests(stages);
@@ -44,11 +43,10 @@ int HPC_Alltoall_H(const void *sendbuf, int sendcount, MPI_Datatype sendtype, vo
 
     char* temp_send_buffer = new char[sendbuf_size];
     memcpy(temp_send_buffer, static_cast<char*>(const_cast<void*>(sendbuf)), sendbuf_size);
-    // char* temp_recv_buffer = new char[sendbuf_size];
+
     for (int j = 0; j < stages; j++) {
 
         partner = world_rank ^ (1 << (stages - j - 1));
-
         char* send_pos = (world_rank & (1 << (stages - j - 1))) ? 
                          temp_send_buffer :
                          temp_send_buffer + modified_sendcount * MPI_Type_size_wrapper(sendtype);
@@ -58,53 +56,58 @@ int HPC_Alltoall_H(const void *sendbuf, int sendcount, MPI_Datatype sendtype, vo
         MPI_Isend(send_pos, modified_sendcount, sendtype, partner, 0, comm, &send_requests[j]);
         MPI_Irecv(recv_pos, modified_recvcount, recvtype, partner, 0, comm, &recv_requests[j]);
 
-        MPI_Wait(&send_requests[0], &send_statuses[0]);
-        MPI_Wait(&recv_requests[0], &recv_statuses[0]);
+        MPI_Wait(&send_requests[j], &send_statuses[j]);
+        MPI_Wait(&recv_requests[j], &recv_statuses[j]);
 
-        // Modify temp_send_buffer based on recvbuf
         char* storage_buffer = new char[sendbuf_size];
-
         for (int k = 0; k < splits; k++) {
-            memcpy(storage_buffer + sendcount * MPI_Type_size_wrapper(sendtype) * k * 2, temp_send_buffer + sendcount * MPI_Type_size_wrapper(sendtype) * k, sendcount * MPI_Type_size_wrapper(sendtype));
+            char* send_pos = (world_rank & (1 << (stages - j - 1))) ? 
+                            temp_send_buffer + modified_sendcount * MPI_Type_size_wrapper(sendtype) :
+                            temp_send_buffer;
+    
+            memcpy(storage_buffer + sendcount * MPI_Type_size_wrapper(sendtype) * k * 2, send_pos + sendcount * MPI_Type_size_wrapper(sendtype) * k, sendcount * MPI_Type_size_wrapper(sendtype));
             memcpy(storage_buffer + sendcount * MPI_Type_size_wrapper(sendtype) * (2 * k + 1), recv_pos + sendcount * MPI_Type_size_wrapper(sendtype) * k, sendcount * MPI_Type_size_wrapper(sendtype));
         }
-
-        std::memcpy(temp_send_buffer, storage_buffer, sendbuf_size);
-
-        memset(storage_buffer, 0, sendbuf_size);
-        memset(storage_buffer, 0, sendbuf_size);
-
-        if (world_rank == 0) {
-            std::cout << "stage " << j << " :" << world_rank << " sends to " << partner  << " " << "splits :" << splits << " sendbuff " << sendbuf_size << std::endl;
-            std::cout << "stage" << j << " send count: " << modified_sendcount << std::endl;
-            int* recvbuf_int = static_cast<int*>(recvbuf);
-
-            for (int j = 0; j < 24; j++) {
-                for (int i = 0; i < 3; i++)
-                    std::cout << recvbuf_int[j * 3 + i] << " ";
-
-                std::cout << std::endl;
-                if ((j+1) % 3 == 0 && j != 0) std::cout << std::endl;
-            }
-            std::cout << std::endl;
-
-
-            std::cout << std::endl;
-            int* sendbuf_int2 = reinterpret_cast<int*>(temp_send_buffer);
-            for (int j = 0; j < 24; j++) {
-                for (int i = 0; i < 3; i++)
-                    std::cout << sendbuf_int2[j * 3 + i] << " ";
-
-                std::cout << std::endl;
-                if ((j+1) % 3 == 0 && j != 0) std::cout << std::endl;
-            }
-            std::cout << std::endl;
-            std::cout << " SUCESSS " << std::endl;
-        }
-        if (j == stages - 1) { delete[] storage_buffer; }
-
+        memcpy(temp_send_buffer, storage_buffer, sendbuf_size);
+        delete[] storage_buffer;
     }
-    std::memcpy(static_cast<char*>(recvbuf), temp_send_buffer, sendbuf_size);
+
+    int ref_world_rank = world_rank;
+
+    char* reversed = new char[sendbuf_size];
+    char* holder = new char[sendbuf_size];
+    int packet_size = sendcount * MPI_Type_size_wrapper(sendtype);
+    int tuple_packet_size = 2 * packet_size;
+
+    if (world_rank % 2 != 0) {
+
+        ref_world_rank = world_size - 1 - world_rank;
+
+        for (int k = 0; k < sendbuf_size; k+=packet_size) {
+            memcpy(reversed + k, temp_send_buffer + (sendbuf_size - k - packet_size), packet_size);
+        }
+        memcpy(temp_send_buffer, reversed, sendbuf_size);
+    }
+
+    int dist = tuple_packet_size * (ref_world_rank / 2); // go to the copy position
+
+    std::unordered_map<int, int> visited;
+
+    for (int k = 0, i = 0; k < sendbuf_size; k+=tuple_packet_size, i++) { // can be skipped for rank = 0
+
+        if (visited.find(k) != visited.end() || visited.find((k + dist) % sendbuf_size) != visited.end()) {
+            continue;
+        }
+
+        visited[k] = 1;
+        visited[((k + dist) % sendbuf_size)] = 1;
+        memcpy(holder + k, temp_send_buffer + ((k + dist) % sendbuf_size), tuple_packet_size);
+        memcpy(holder + ((k + dist) % sendbuf_size), temp_send_buffer + k, tuple_packet_size);
+    }
+    memcpy(static_cast<char*>(recvbuf), holder, sendbuf_size);
+    delete[] temp_send_buffer;
+    delete[] reversed;
+    delete[] holder;
     return MPI_SUCCESS;
 }
 
@@ -121,7 +124,7 @@ int HPC_Alltoall_A(const void *sendbuf, int sendcount, MPI_Datatype sendtype, vo
     std::vector<MPI_Status> recv_statuses(world_size - 1);
 
     // copy the data that is supposed to be sent to itself directly into the recvbuf
-    std::memcpy(static_cast<char*>(recvbuf) + world_rank * recvcount * MPI_Type_size_wrapper(recvtype), 
+    memcpy(static_cast<char*>(recvbuf) + world_rank * recvcount * MPI_Type_size_wrapper(recvtype), 
                 static_cast<const char*>(sendbuf) + world_rank * sendcount * MPI_Type_size_wrapper(sendtype), 
                 sendcount * MPI_Type_size_wrapper(sendtype));
 
@@ -231,10 +234,9 @@ int main(int argc, char** argv) {
             }
             outfile << std::endl;
         }
-        printf("Time taken: %.6f milliseconds\n", time_taken_ms);
+        printf("Time taken: %.6f milliseconds,\n", time_taken_ms);
     }
 
     MPI_Finalize();
-    
     return 0;
 }
